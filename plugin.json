@@ -1,0 +1,14 @@
+{
+  "id": "webtoon-dl",
+  "name": "Webtoons",
+  "version": 1,
+  "about": "A series on webtoons.com, one archive per episode, oldest first, carrying on from the last episode taken. Fetched with Webtoon-Downloader.",
+  "output": "chapter-cbz",
+  "install": {"pip": ["webtoon_downloader==2.4.0"]},
+  "fields": [
+    {"key": "url", "type": "url", "label": "Series address",
+     "placeholder": "https://www.webtoons.com/en/genre/series-name/list?title_no=123"},
+    {"key": "start_episode", "type": "count", "label": "Start at episode",
+     "help": "Only for the first run: the number the series' list shows beside the episode (#12) to start from. Blank starts from the first. After that, each run carries on from the last episode taken."}
+  ]
+}
