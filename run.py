@@ -31,13 +31,40 @@ UNSAFE = re.compile(r'[\\/:*?"<>|\x00-\x1f]+')
 LONGEST = 120
 
 
+LABELLED = re.compile(r"^#(\d+)(?: (.*))?$")
+
+
 def label(episode):
-    #the chapter's name, and so its archive's: the site's number for it first, as its list shows it, which
-    #the updater reads as the chapter's own number and goes on from - then the title, made fit for a file
-    #name. an episode titled only by its number is just that
+    #the chapter's name, and so its archive's: the episode's place in the series' list first - the number
+    #the site's app and mobile pages show beside it, and what the tool's own command line names its archive
+    #by - which the updater reads as the chapter's own number. then the title, made fit for a file name. not
+    #the site's episode_no, which skips the number of every episode ever taken down, so a series with a gap
+    #early on is #164 there where its readers know it as #153
     title = " ".join(UNSAFE.sub(" ", episode.title).split())
-    return "#{0} {1}".format(episode.data_episode_no, title)[:LONGEST].rstrip(" .") if title else \
-        "#{0}".format(episode.data_episode_no)
+    return "#{0} {1}".format(episode.number, title)[:LONGEST].rstrip(" .") if title else \
+        "#{0}".format(episode.number)
+
+
+def after(listed, last):
+    #the episodes after the last one taken, found by its title: an episode taken down since moves every
+    #later one up a place, so the place its label says may now be another episode's. the title at or
+    #nearest that place wins, for a series with two episodes of one name. a title found nowhere - renamed
+    #on the site since, or taken down itself - leaves only the place to go by, and says so
+    said = LABELLED.match(last)
+    if not said:
+        raise ValueError("{0!r} is not a chapter this plugin named, #<place> <title>".format(last))
+    place = int(said.group(1))
+    same = [at for at, episode in enumerate(listed) if label(episode) == last] or \
+        [at for at, episode in enumerate(listed) if LABELLED.match(label(episode)).group(2) == said.group(2)]
+    if same:
+        at = min(same, key=lambda at: abs(listed[at].number - place))
+        if listed[at].number != place:
+            print("{0} is #{1} now: an earlier episode was taken down or added since.".format(
+                last, listed[at].number), flush=True)
+        return listed[at + 1:]
+    print("WARNING: no episode is called what {0} was, so this carries on after #{1}, by place alone.".format(
+        last, place), flush=True)
+    return [episode for episode in listed if episode.number > place]
 
 
 class Aside:
@@ -84,12 +111,12 @@ class Episodes(WebtoonDownloader):
         return Aside(Path(self._directory) / (label(chapter_info) + ".cbz"))
 
 
-def wanted(episodes, after=None, first=None):
-    if after is not None:
-        return [episode for episode in episodes if episode.data_episode_no > after]
+def wanted(listed, last=None, first=None):
+    if last:
+        return after(listed, last)
     if first:
-        return [episode for episode in episodes if episode.data_episode_no >= first]
-    return list(episodes)
+        return [episode for episode in listed if episode.number >= first]
+    return list(listed)
 
 
 async def report(chapter_info, kind, extractor=None):
@@ -102,14 +129,12 @@ async def fetch(args):
         listed = await WebtoonFetcher(client, args.url).get_chapters_details(args.url)
         picked = wanted(listed, args.after, args.first)
         if not picked:
-            print("No episode after #{0} yet: caught up.".format(args.after) if args.after is not None else
+            print("No episode after {0} yet: caught up.".format(args.after) if args.after else
                   "The series lists no episode{0}.".format(" from #{0}".format(args.first) if args.first else ""))
             return
+        #the tool's ComicInfo gives each its place as its Number, as its label does
         print("{0} episode(s) to fetch, #{1} to #{2}:".format(
-            len(picked), picked[0].data_episode_no, picked[-1].data_episode_no), flush=True)
-        #the episode's number in its ComicInfo is the site's, as its label says, not its place in the list -
-        #the updater keeps what another program says a chapter's number is over what it works out
-        picked = [dataclasses.replace(episode, number=episode.data_episode_no) for episode in picked]
+            len(picked), picked[0].number, picked[-1].number), flush=True)
         pages = HttpImageDownloader(client=client, concurrent_downloads_limit=PAGES_AT_ONCE,
                                     #no conversion: every picture kept as the site served it
                                     transformers=[])
@@ -136,8 +161,10 @@ def main(argv=None):
     parser.add_argument("url", help="the series' list page, https://www.webtoons.com/.../list?title_no=...")
     parser.add_argument("--output", required=True, help="the folder to write the archives into")
     start = parser.add_mutually_exclusive_group()
-    start.add_argument("--after", type=int, help="fetch only the episodes numbered after this one")
-    start.add_argument("--from", dest="first", type=int, help="fetch from this episode's number on")
+    start.add_argument("--after", metavar="LABEL",
+                       help="the last chapter taken, '#<place> <title>': fetch the episodes after it")
+    start.add_argument("--from", dest="first", type=int,
+                       help="fetch from this place in the series' list on, the number the site's app shows")
     try:
         args = parser.parse_args(argv)
     except SystemExit as stop:
